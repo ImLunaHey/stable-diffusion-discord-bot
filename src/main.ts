@@ -1,6 +1,7 @@
-import { AttachmentBuilder, Client, EmbedBuilder, IntentsBitField, TextChannel } from 'discord.js';
+import { AttachmentBuilder, Client, EmbedBuilder, IntentsBitField, Message, TextChannel } from 'discord.js';
 import { EasyDiffusion } from './easy-diffusion';
 import { Logger } from './logger';
+import { sleep } from 'bun';
 
 const logger = new Logger({ service: 'app' });
 
@@ -11,6 +12,8 @@ const client = new Client({
 client.on('ready', async () => {
     logger.info('Connected to discord');
 });
+
+const queue = new Set();
 
 const getImage = async (prompt: string, count: number = 4) => {
     // Create easy diffusion image settings
@@ -33,7 +36,6 @@ const getImage = async (prompt: string, count: number = 4) => {
         description: settings.prompt,
     }));
 
-
     // Create the embed
     const embeds = images.map((_, index) => {
         return new EmbedBuilder()
@@ -43,8 +45,6 @@ const getImage = async (prompt: string, count: number = 4) => {
 
     return { embeds, files };
 }
-
-let isRunning = false;
 
 client.on('messageCreate', async message => {
     try {
@@ -56,29 +56,39 @@ client.on('messageCreate', async message => {
             return;
         }
 
-        if (isRunning) {
-            await message.reply('WAIT!');
-            return;
+        let reply: Message<boolean> | null = null;
+
+        if (queue.size >= 1) {
+            reply = await message.reply('Queued, please wait...');
         }
 
-        isRunning = true;
-
-        await message.react('👍');
+        queue.add(message.id);
+        await message.react('👀');
 
         const originalPrompt = body.split('<@1142762469392134245>')[1].trim();
         const hasCount = body.endsWith('x1') || body.endsWith('x2') || body.endsWith('x3') || body.endsWith('x4');
         const count = hasCount ? parseInt(body.slice(-1), 10) : 1;
         const prompt = hasCount ? originalPrompt.slice(0, -2) : originalPrompt;
 
+        // wait until we're at the top of the queue
+        while (true) {
+            const nextItem = [...queue.values()].filter(Boolean)[0];
+            if (nextItem === message.id) break;
+            await sleep(100);
+        }
+
+        // Tell the user we're doing their one now
+        reply = reply ? await reply.edit('Rendering image...') : await message.reply('Rendering image...');
+
         logger.info('Rendering image', { prompt, count });
         const response = await getImage(prompt, count);
         logger.info('Image rendered, posting to discord');
-        await message.reply(response);
+        await reply.edit({ content: prompt, ...response });
         logger.info('Image posted to discord');
     } catch (error) {
         logger.error('Failed to render image', { error });
     } finally {
-        isRunning = false;
+        queue.delete(message.id);
     }
 });
 

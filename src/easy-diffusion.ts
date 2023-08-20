@@ -244,6 +244,7 @@ export class EasyDiffusion {
 
             // Image is rendering
             if (!isFinished(body)) {
+                if (body.step === undefined) continue;
                 this.logger.debug(`Step ${body.step + 1}/${body.total_steps}`);
                 continue;
             }
