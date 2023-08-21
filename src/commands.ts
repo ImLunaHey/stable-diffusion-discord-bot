@@ -1,6 +1,6 @@
 import '@total-typescript/ts-reset';
 import { ApplicationCommandOptionType, AttachmentBuilder, Collection, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, Role } from 'discord.js';
-import { type ArgsOf, Discord, On, Slash, SlashOption } from 'discordx';
+import { type ArgsOf, Discord, On, Slash, SlashOption, SlashChoice } from 'discordx';
 import { EasyDiffusion } from './easy-diffusion';
 import { Logger } from './logger';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -43,8 +43,8 @@ const ratios = {
     },
 };
 
-type Model = 'realisticVisionV13_v13' | 'lazymix_v10';
-const models = ['realisticVisionV13_v13', 'lazymix_v10'];
+type Model = 'realisticVisionV13_v13' | 'lazymix_v10' | 'f222' | 'SD 1.4';
+const models = ['realisticVisionV13_v13', 'lazymix_v10', 'f222', 'SD 1.4'];
 
 @Discord()
 export class Commands {
@@ -108,34 +108,8 @@ export class Commands {
             description: 'Steps',
             required: false,
             type: ApplicationCommandOptionType.Number,
-            async autocomplete(interaction) {
-                const defaultSteps = [{
-                    count: 1,
-                    label: '1s',
-                }, {
-                    count: 10,
-                    label: '5s',
-                }, {
-                    count: 25,
-                    label: '15s',
-                }];
-                const betaSteps = [{
-                    count: 50,
-                    label: '30s'
-                }, {
-                    count: 100,
-                    label: '2m',
-                }];
-                const steps = isBetaTester(interaction.user.id) ? [...defaultSteps, ...betaSteps] : defaultSteps;
-                const focusedOption = interaction.options.getFocused(true);
-                const filteredSteps = focusedOption.value.trim().length > 0 ? steps.filter(step => {
-                    return step.label.startsWith(focusedOption.value) || `${step.count}`.startsWith(focusedOption.value);
-                }) : steps;
-                await interaction.respond(filteredSteps.map(step => ({
-                    name: `${step.count} (average time per image ${step.label})`,
-                    value: step.count,
-                })));
-            },
+            minValue: 1,
+            maxValue: 100,
         })
         originalSteps: number = 25,
         @SlashOption({
