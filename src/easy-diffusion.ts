@@ -27,41 +27,43 @@ const urlToDataUrl = async (url: string) => {
     } catch { }
 };
 
+export type Data = {
+    prompt: string;
+    seed: number;
+    used_random_seed: boolean;
+    negative_prompt: string;
+    num_outputs: number;
+    num_inference_steps: number;
+    guidance_scale: number;
+    width: number;
+    height: number;
+    vram_usage_level: string;
+    sampler_name: string;
+    use_face_correction?: 'GFPGANv1.4' | 'GFPGANv1.3' | undefined;
+    use_stable_diffusion_model: string;
+    clip_skip: boolean;
+    tiling: string;
+    use_vae_model: string;
+    stream_progress_updates: boolean;
+    stream_image_progress: boolean;
+    show_only_filtered_image: boolean;
+    block_nsfw: boolean;
+    output_format: string;
+    output_quality: number;
+    output_lossless: boolean;
+    metadata_output_format: string;
+    original_prompt: string;
+    active_tags: string[];
+    inactive_tags: string[];
+    session_id: string;
+};
+
 export class EasyDiffusion {
     private logger = new Logger({ service: 'easy-diffusion' });
     private controlNetUrl: string | undefined;
-    private data: {
-        prompt: string;
-        seed: number;
-        used_random_seed: boolean;
-        negative_prompt: string;
-        num_outputs: number;
-        num_inference_steps: number;
-        guidance_scale: number;
-        width: number;
-        height: number;
-        vram_usage_level: string;
-        sampler_name: string;
-        use_face_correction?: 'GFPGANv1.4' | 'GFPGANv1.3' | undefined;
-        use_stable_diffusion_model: string;
-        clip_skip: boolean;
-        tiling: string;
-        use_vae_model: string;
-        stream_progress_updates: boolean;
-        stream_image_progress: boolean;
-        show_only_filtered_image: boolean;
-        block_nsfw: boolean;
-        output_format: string;
-        output_quality: number;
-        output_lossless: boolean;
-        metadata_output_format: string;
-        original_prompt: string;
-        active_tags: string[];
-        inactive_tags: string[];
-        session_id: string;
-    };
+    private data: Data;
 
-    constructor(private url: string = 'http://localhost:9000') {
+    constructor(private url: string = 'http://localhost:9000', data: Partial<Data> = {}) {
         const sessionId = `${new Date().getUTCFullYear()}-${new Date()
             .getUTCMonth()
             .toString()
@@ -70,7 +72,7 @@ export class EasyDiffusion {
             prompt: 'a photograph of an astronaut riding a horse',
             seed: 1458359407,
             used_random_seed: true,
-            negative_prompt: 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, (((watermark))), username, blurry, face not visible, hat, tattoos',
+            negative_prompt: 'teen, kid, child, underage, 15, 16, 17, minor, children, rape, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, (((watermark))), username, blurry, face not visible, hat, tattoos',
             num_outputs: 1,
             num_inference_steps: 20,
             guidance_scale: 7.5,
@@ -95,7 +97,8 @@ export class EasyDiffusion {
             active_tags: [],
             inactive_tags: [],
             session_id: sessionId,
-        };
+            ...data,
+        } satisfies Partial<Data>;
     }
 
     setPrompt(prompt: string): EasyDiffusion {
