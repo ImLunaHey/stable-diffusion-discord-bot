@@ -1,4 +1,4 @@
-import { sleep } from 'bun';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { Logger } from './logger';
 
 type Online = { status: 'Online' | 'LoadingModel', queue: number, stream: string, task: number };

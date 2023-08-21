@@ -4,10 +4,13 @@ import { z } from "zod";
 const env = createEnv({
     isServer: true,
     server: {
-        DATABASE_URL: z.string().url(),
-        OPEN_AI_API_KEY: z.string().min(1),
+        NODE_ENV: z.string().default('development'),
+        BOT_TOKEN: z.string(),
     },
     runtimeEnv: process.env,
 });
 
-export const config = env;
+export const config = {
+    environment: env.NODE_ENV,
+    botToken: env.BOT_TOKEN,
+};

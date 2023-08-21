@@ -1,8 +1,15 @@
+import { start } from './bot';
 import { Logger } from './logger';
-import { main } from './main';
 
-const logger = new Logger({ service: 'app' });
+const logger = new Logger({ service: 'bot' });
 
-main().catch(error => {
-    logger.error('Application crashed', { error });
+// eslint-disable-next-line unicorn/prefer-top-level-await
+start().catch(error => {
+    if (!(error instanceof Error)) throw new Error(`Unknown error "${String(error)}"`);
+    logger.error('Failed to load bot', {
+        error,
+    });
+
+    // eslint-disable-next-line unicorn/no-process-exit
+    process.exit(1);
 });

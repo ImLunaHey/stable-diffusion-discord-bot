@@ -12,6 +12,11 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "discord.js": "^14.13.0"
+    "@total-typescript/ts-reset": "^0.5.1",
+    "discord.js": "^14.13.0",
+    "discordx": "^11.7.6",
+    "exit-hook": "^3.2.0",
+    "outdent": "^0.8.0",
+    "reflect-metadata": "^0.1.13"
   }
 }

@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "module": "esnext",
     "target": "esnext",
     "moduleResolution": "bundler",
@@ -12,6 +14,8 @@
     "jsx": "preserve",
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
     "allowJs": true,
     "noEmit": true,
     "types": [
