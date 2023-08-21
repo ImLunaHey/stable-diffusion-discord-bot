@@ -31,7 +31,7 @@ export class EasyDiffusion {
         height: number;
         vram_usage_level: string;
         sampler_name: string;
-        use_face_correction?: string;
+        use_face_correction?: 'GFPGANv1.4' | 'GFPGANv1.3' | undefined;
         use_stable_diffusion_model: string;
         clip_skip: boolean;
         tiling: string;
@@ -67,6 +67,7 @@ export class EasyDiffusion {
             height: 512,
             vram_usage_level: 'balanced',
             sampler_name: 'dpmpp_sde',
+            use_face_correction: undefined,
             use_stable_diffusion_model: 'realisticVisionV13_v13',
             clip_skip: false,
             tiling: 'none',
@@ -214,6 +215,11 @@ export class EasyDiffusion {
 
     setSessionId(sessionId: string): EasyDiffusion {
         this.data.session_id = sessionId;
+        return this;
+    }
+
+    setUseFaceCorrection(faceCorrection: 'GFPGANv1.4' | 'GFPGANv1.3' | undefined): EasyDiffusion {
+        this.data.use_face_correction = faceCorrection;
         return this;
     }
 
