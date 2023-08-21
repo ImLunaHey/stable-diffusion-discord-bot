@@ -139,6 +139,12 @@ export class Commands {
         })
         originalSteps: number = 25,
         @SlashOption({
+            name: 'control-net-url',
+            description: 'Which image to use for canny control net',
+            required: false,
+            type: ApplicationCommandOptionType.String,
+        }) controlNetUrl: string | undefined,
+        @SlashOption({
             name: 'seed',
             description: 'Which seed to use? (default is random)',
             required: false,
@@ -207,6 +213,7 @@ export class Commands {
                 .setBlockNSFW(interaction.channelId !== '1142828930831757362')
                 .setGuidanceScale(originalGuidanceScale)
                 .setUseFaceCorrection(originalFaceFix ? 'GFPGANv1.4' : undefined)
+                .setControlNetUrl(controlNetUrl)
                 .setSeed(originalSeed);
 
             const settings = imageSettings.build();

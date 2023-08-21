@@ -17,8 +17,19 @@ const isFinished = (body: Step | Success | null): body is Success => {
     return false;
 };
 
+const urlToDataUrl = async (url: string) => {
+    try {
+        const imageUrlData = await fetch(url);
+        const buffer = await imageUrlData.arrayBuffer();
+        const stringifiedBuffer = Buffer.from(buffer).toString('base64');
+        const contentType = imageUrlData.headers.get('content-type');
+        return `data:${contentType};base64,${stringifiedBuffer}`;
+    } catch { }
+};
+
 export class EasyDiffusion {
     private logger = new Logger({ service: 'easy-diffusion' });
+    private controlNetUrl: string | undefined;
     private data: {
         prompt: string;
         seed: number;
@@ -223,12 +234,25 @@ export class EasyDiffusion {
         return this;
     }
 
+    setControlNetUrl(url?: string | undefined): EasyDiffusion {
+        this.controlNetUrl = url;
+        return this;
+    }
+
     build() {
         return this.data;
     }
 
     async render() {
-        const body = JSON.stringify(this.build());
+        const settings = this.build();
+        const controlImage = this.controlNetUrl ? await urlToDataUrl(this.controlNetUrl) : undefined;
+        const body = JSON.stringify({
+            ...settings,
+            ...(controlImage ? {
+                use_controlnet_model: 'control_v11p_sd15_canny',
+                control_image: controlImage,
+            } : {})
+        });
 
         const response = await fetch(`${this.url}/render`, {
             headers: {
