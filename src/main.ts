@@ -15,14 +15,19 @@ client.on('ready', async () => {
 
 const queue = new Set();
 
-const getImage = async (prompt: string, count: number = 4) => {
+const getImage = async (prompt: string, count: number = 4, steps: number, blockNSFW: boolean) => {
+    const seed = parseInt(`${Math.random() * 1_000_000_000}`, 10);
+    const cleanPrompt = prompt.replace(/[^a-zA-Z0-9_]/g, '_');
+
     // Create easy diffusion image settings
     const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
         .setPrompt(prompt)
         .setNumOutputs(count > 4 ? 4 : count)
-        .setHeight(count === 1 ? 1024 : 512)
-        .setWidth(count === 1 ? 1024 : 512)
-        .setSeed(parseInt(`${Math.random() * 1_000_000_000}`, 10));
+        .setHeight(512)
+        .setWidth(512)
+        .setNumInferenceSteps(steps)
+        .setBlockNSFW(blockNSFW)
+        .setSeed(seed);
 
     // Create settings
     const settings = imageSettings.build();
@@ -32,18 +37,12 @@ const getImage = async (prompt: string, count: number = 4) => {
 
     // Create discord attachments
     const files = images.map((image, index) => new AttachmentBuilder(Buffer.from(image, 'base64'), {
-        name: `image_${index}.png`,
-        description: settings.prompt,
+        // Create file name based on seed + index + clean_prompt
+        name: `${seed}_${index}.png`,
+        description: `Seed=${seed}\nPrompt=${prompt}`,
     }));
 
-    // Create the embed
-    const embeds = images.map((_, index) => {
-        return new EmbedBuilder()
-            .setURL('http://example.com/image.png')
-            .setImage(`attachment://image_${index}.png`);
-    });
-
-    return { embeds, files };
+    return { files };
 }
 
 client.on('messageCreate', async message => {
@@ -81,12 +80,13 @@ client.on('messageCreate', async message => {
         reply = reply ? await reply.edit('Rendering image...') : await message.reply('Rendering image...');
 
         logger.info('Rendering image', { prompt, count });
-        const response = await getImage(prompt, count);
+        const response = await getImage(prompt, count, message.author.id === '784365843810222080' ? 50 : 20, message.channelId !== '1142828930831757362');
         logger.info('Image rendered, posting to discord');
         await reply.edit({ content: prompt, ...response });
         logger.info('Image posted to discord');
     } catch (error) {
         logger.error('Failed to render image', { error });
+        await message.reply('FAILED, TRY AGAIN!');
     } finally {
         queue.delete(message.id);
     }

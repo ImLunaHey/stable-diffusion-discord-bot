@@ -31,6 +31,7 @@ export class EasyDiffusion {
         height: number;
         vram_usage_level: string;
         sampler_name: string;
+        use_face_correction?: string;
         use_stable_diffusion_model: string;
         clip_skip: boolean;
         tiling: string;
@@ -58,22 +59,22 @@ export class EasyDiffusion {
             prompt: 'a photograph of an astronaut riding a horse',
             seed: 1458359407,
             used_random_seed: true,
-            negative_prompt: '',
+            negative_prompt: 'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, (((watermark))), username, blurry, face not visible, hat, tattoos',
             num_outputs: 1,
             num_inference_steps: 20,
             guidance_scale: 7.5,
             width: 512,
             height: 512,
             vram_usage_level: 'balanced',
-            sampler_name: 'euler_a',
-            use_stable_diffusion_model: 'lazymix_v10',
+            sampler_name: 'dpmpp_sde',
+            use_stable_diffusion_model: 'realisticVisionV13_v13',
             clip_skip: false,
             tiling: 'none',
             use_vae_model: 'vae-ft-mse-840000-ema-pruned',
             stream_progress_updates: true,
             stream_image_progress: true,
             show_only_filtered_image: true,
-            block_nsfw: false,
+            block_nsfw: true,
             output_format: 'png',
             output_quality: 75,
             output_lossless: false,
@@ -237,7 +238,7 @@ export class EasyDiffusion {
 
             // Fetch the image itself
             const response = await fetch(`http://192.168.1.101:9000${json.stream}`);
-            const body = await response.json() as ImageResponse;
+            const body = await response.json().catch(() => null) as ImageResponse;
 
             // Waiting for the image to start rendering
             if (!body) continue;
