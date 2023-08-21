@@ -1,4 +1,8 @@
 {
     "autoHide.autoHidePanel": false,
-    "autoHide.autoHideSideBar": false
+    "autoHide.autoHideSideBar": false,
+    "cSpell.words": [
+        "GFPGA",
+        "lazymix"
+    ]
 }

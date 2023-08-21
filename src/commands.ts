@@ -6,6 +6,46 @@ import { Logger } from './logger';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const queue = new Set();
+
+const isBetaTester = (id: string) => ['784365843810222080', '120010437294161920'].includes(id);
+
+type Ratio = '1:1' | '2:3' | '3:2' | '9:16' | '16:9';
+const ratios = {
+    '1:1': {
+        label: 'square',
+        width: 512,
+        height: 512,
+        maxCount: 4,
+    },
+    '2:3': {
+        label: 'landscape',
+        width: 512,
+        height: 768,
+        maxCount: 1,
+    },
+    '3:2': {
+        label: 'portrait',
+        width: 512,
+        height: 768,
+        maxCount: 1,
+    },
+    '9:16': {
+        label: 'portrait',
+        width: 384,
+        height: 704,
+        maxCount: 2,
+    },
+    '16:9': {
+        label: 'landscape',
+        width: 704,
+        height: 384,
+        maxCount: 2,
+    },
+};
+
+type Model = 'realisticVisionV13_v13' | 'lazymix_v10';
+const models = ['realisticVisionV13_v13', 'lazymix_v10'];
+
 @Discord()
 export class Commands {
     private logger = new Logger({ service: 'Commands' });
@@ -13,38 +53,6 @@ export class Commands {
     constructor() {
         this.logger.info('Initialised');
     }
-
-    // @Slash({
-    //     name: 'privacy',
-    //     description: 'Read the privacy policy',
-    // })
-    // async privacy(
-    //     interaction: CommandInteraction,
-    // ) {
-    //     // Only works in guilds
-    //     if (!interaction.guild?.id) return;
-
-    //     // Create the privacy policy embed
-    //     const embed = new EmbedBuilder()
-    //         .setColor('#0099ff')
-    //         .setTitle('Privacy Policy')
-    //         .setDescription('This Privacy Policy outlines the types of data we collect from users of our Discord bots and how we use, share, and protect that data.')
-    //         .addFields(
-    //             { name: 'Data Collection', value: 'Our Discord bots collect the following data from users:\n\nUser ID\nGuild ID\nJoined timestamp\nChannel message count (anonymous)\n\nIf a user chooses to opt-in, we also collect the following anonymous data:\n\nUser post count per hour' },
-    //             { name: 'Data Use', value: 'We use the collected data to generate analytics and statistics for our Discord bots. The data is used to identify trends and usage patterns, which help us improve the functionality and performance of our bots. We do not use the data for any other purposes.' },
-    //             { name: 'Data Sharing', value: 'We do not share any user data with third parties. The data we collect is used exclusively for our Discord bots.' },
-    //             { name: 'Data Protection', value: 'We take the security of user data seriously and have implemented measures to protect it. Our servers and databases are secured using industry-standard encryption and security protocols. Access to user data is limited to authorized personnel who require it for their job duties.' },
-    //             { name: 'Data Retention and Deletion', value: 'We retain user data for as long as necessary to provide our Discord bots\' services. If a user chooses to opt-out, we will delete all personal data associated with that user from our servers and databases.' },
-    //             { name: 'Contact Information', value: 'If you have any questions or concerns about our privacy policy or the data we collect, you may message <@784365843810222080> (ImLunaHey#2485).' },
-    //             { name: 'Changes to Privacy Policy', value: 'We reserve the right to modify this privacy policy at any time without prior notice. Any changes will be reflected on this page.' },
-    //         );
-
-    //     // Send the privacy policy
-    //     await interaction.reply({
-    //         ephemeral: true,
-    //         embeds: [embed]
-    //     });
-    // }
 
     @Slash({
         name: 'dream',
@@ -62,26 +70,120 @@ export class Commands {
             description: 'How many images to generate at once (max 4)',
             required: true,
             type: ApplicationCommandOptionType.Number,
-            maxValue: 4,
             minValue: 1,
+            maxValue: 4,
         }) originalCount: number,
+        @SlashOption({
+            name: 'ratio',
+            description: 'Aspect ratio',
+            required: false,
+            type: ApplicationCommandOptionType.String,
+            async autocomplete(interaction) {
+                const focusedOption = interaction.options.getFocused(true);
+                const filteredRatios = focusedOption.value.trim().length > 0 ? Object.entries(ratios).filter(([ratio, settings]) => `${ratio} (${settings.label})`.toLowerCase().startsWith(focusedOption.value.toLowerCase())) : Object.entries(ratios);
+                await interaction.respond(filteredRatios.map(([ratio, settings]) => ({
+                    name: `${ratio} (${settings.label})`,
+                    value: ratio,
+                })));
+            },
+        })
+        originalRatio: Ratio = '1:1',
+        @SlashOption({
+            name: 'model',
+            description: 'Which model to load',
+            required: false,
+            type: ApplicationCommandOptionType.String,
+            async autocomplete(interaction) {
+                const focusedOption = interaction.options.getFocused(true);
+                const filteredModels = focusedOption.value.trim().length > 0 ? models.filter(model => model.toLowerCase().startsWith(focusedOption.value.toLowerCase())) : models;
+                await interaction.respond((isBetaTester(interaction.user.id) ? filteredModels : [filteredModels[0]]).map(model => ({
+                    name: model,
+                    value: model,
+                })));
+            },
+        })
+        originalModel: Model = 'realisticVisionV13_v13',
+        @SlashOption({
+            name: 'steps',
+            description: 'Steps',
+            required: false,
+            type: ApplicationCommandOptionType.Number,
+            async autocomplete(interaction) {
+                const defaultSteps = [{
+                    count: 1,
+                    label: '1s',
+                }, {
+                    count: 10,
+                    label: '5s',
+                }, {
+                    count: 25,
+                    label: '15s',
+                }];
+                const betaSteps = [{
+                    count: 50,
+                    label: '30s'
+                }, {
+                    count: 100,
+                    label: '2m',
+                }];
+                const steps = isBetaTester(interaction.user.id) ? [...defaultSteps, ...betaSteps] : defaultSteps;
+                const focusedOption = interaction.options.getFocused(true);
+                const filteredSteps = focusedOption.value.trim().length > 0 ? steps.filter(step => {
+                    return step.label.startsWith(focusedOption.value) || `${step.count}`.startsWith(focusedOption.value);
+                }) : steps;
+                await interaction.respond(filteredSteps.map(step => ({
+                    name: `${step.count} (average time per image ${step.label})`,
+                    value: step.count,
+                })));
+            },
+        })
+        originalSteps: number = 25,
+        @SlashOption({
+            name: 'seed',
+            description: 'Which seed to use? (default is random)',
+            required: false,
+            type: ApplicationCommandOptionType.Number,
+            minValue: 1,
+            maxValue: 9_999_999_999,
+        }) originalSeed: number = parseInt(`${Math.random() * 1_000_000_000}`, 10),
+        @SlashOption({
+            name: 'guidance-scale',
+            description: 'How closely do you want the prompt to be followed?',
+            required: false,
+            type: ApplicationCommandOptionType.Number,
+            minValue: 1,
+            maxValue: 15,
+        }) originalGuidanceScale: number = 7.5,
+        @SlashOption({
+            name: 'face-fix',
+            description: 'Should faces be fixed after the image is generated? (this takes another 10s)',
+            required: false,
+            type: ApplicationCommandOptionType.Boolean,
+        }) originalFaceFix = false,
         interaction: CommandInteraction,
     ) {
         // Only works in guilds
         if (!interaction.guild?.id) return;
 
         try {
+            // Check if verified
             if (!((interaction.member?.roles) as GuildMemberRoleManager).cache.has('1142229529805459566')) {
                 await interaction.reply('You need to be verified first!');
                 return;
             }
 
-            let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
-
-            if (queue.size >= 1) {
-                reply = await interaction.reply('Queued, please wait...');
+            // Check if ratio is valid
+            const ratio = ratios[originalRatio];
+            if (ratio.maxCount < originalCount) {
+                await interaction.reply(`This aspect ratio only allows a max of \`${ratio.maxCount}\` images at a time, you selected \`${originalCount}\`. Please retry with a lower count.`);
+                return;
             }
 
+            // Create reply so we can reuse this while loading, etc.
+            let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
+
+            // Add user's prompt to queue
+            if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
             queue.add(interaction.id);
 
             // wait until we're at the top of the queue
@@ -94,23 +196,21 @@ export class Commands {
             // Tell the user we're doing their one now
             reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
 
-            // Create base settings
-            const count = originalCount > 4 ? 4 : originalCount;
-            const steps = interaction.user.id === '784365843810222080' ? 50 : 20;
-            const blockNSFW = interaction.channelId !== '1142828930831757362';
-            const seed = parseInt(`${Math.random() * 1_000_000_000}`, 10);
-
-            this.logger.info('Rendering image', { prompt: originalPrompt, count: originalCount });
-
             // Create easy diffusion image settings
             const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
                 .setPrompt(originalPrompt)
-                .setNumOutputs(count)
-                .setHeight(512)
-                .setWidth(512)
-                .setNumInferenceSteps(steps)
-                .setBlockNSFW(blockNSFW)
-                .setSeed(seed);
+                .setNumOutputs(originalCount > ratio.maxCount ? 1 : originalCount)
+                .setHeight(ratio.height)
+                .setWidth(ratio.width)
+                .setUseStableDiffusionModel(originalModel)
+                .setNumInferenceSteps(originalSteps)
+                .setBlockNSFW(interaction.channelId !== '1142828930831757362')
+                .setGuidanceScale(originalGuidanceScale)
+                .setUseFaceCorrection(originalFaceFix ? 'GFPGANv1.4' : undefined)
+                .setSeed(originalSeed);
+
+            const settings = imageSettings.build();
+            this.logger.info('Rendering image', settings);
 
             // Render image
             const images = await imageSettings.render();
@@ -118,12 +218,12 @@ export class Commands {
             // Create discord attachments
             const files = images.map((image, index) => new AttachmentBuilder(Buffer.from(image, 'base64'), {
                 // Create file name based on seed + index + clean_prompt
-                name: `${seed}_${index}.png`,
-                description: `Seed=${seed}\nPrompt=${originalPrompt}`,
+                name: `${settings.seed}_${index}.png`,
+                description: settings.prompt,
             }));
 
             this.logger.info('Image rendered, posting to discord');
-            await reply.edit({ content: originalPrompt, files });
+            await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files });
             this.logger.info('Image posted to discord');
         } catch (error) {
             this.logger.error('Failed to render image', { error });
