@@ -1,9 +1,10 @@
 import '@total-typescript/ts-reset';
-import { ApplicationCommandOptionType, AttachmentBuilder, Collection, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, Role } from 'discord.js';
-import { type ArgsOf, Discord, On, Slash, SlashOption, SlashChoice } from 'discordx';
-import { EasyDiffusion } from './easy-diffusion';
+import { ActionRowBuilder, ApplicationCommandOptionType, AttachmentBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, Collection, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, MessageActionRowComponentBuilder, Role } from 'discord.js';
+import { type ArgsOf, Discord, On, Slash, SlashOption, SlashChoice, ButtonComponent } from 'discordx';
+import { Data, EasyDiffusion } from './easy-diffusion';
 import { Logger } from './logger';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { EmbedBuilder } from '@discordjs/builders';
 
 const queue = new Set();
 
@@ -54,6 +55,110 @@ export class Commands {
         this.logger.info('Initialised');
     }
 
+    async validate(interaction: ButtonInteraction | CommandInteraction) {
+        // Check if verified
+        if (!((interaction.member?.roles) as GuildMemberRoleManager).cache.has('1142229529805459566')) {
+            await interaction.reply('You need to be verified first!');
+            return;
+        }
+    }
+
+    async waitForTurn(id: string) {
+        queue.add(id);
+
+        // wait until we're at the top of the queue
+        while (true) {
+            const nextItem = [...queue.values()].filter(Boolean)[0];
+            if (nextItem === id) break;
+            await sleep(100);
+        }
+    }
+
+    async renderImage(imageSettings: EasyDiffusion, interaction: CommandInteraction | ButtonInteraction) {
+        try {
+            const settings = imageSettings.build();
+            this.logger.info('Rendering image', settings);
+
+            const images = await imageSettings.render();
+            this.logger.info('Image rendered');
+
+            return images;
+        } finally {
+            queue.delete(interaction.id);
+        }
+    }
+
+    @ButtonComponent({ id: 'delete-message' })
+    async deleteMessage(interaction: ButtonInteraction): Promise<void> {
+        try {
+            await interaction.message.delete();
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'new-seed' })
+    async newSeed(interaction: ButtonInteraction): Promise<void> {
+        // Create reply so we can reuse this while loading, etc.
+        let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
+
+        // Create easy diffusion image settings
+        const dataEmbed = interaction.message.embeds[0];
+        if (!dataEmbed.description) return;
+        const data = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data;
+        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000', data)
+            .setSeed(parseInt(`${Math.random() * 1_000_000_000}`, 10));
+
+        // Generate settings
+        const settings = imageSettings.build();
+
+        // Add user's prompt to queue
+        if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
+
+        // Wait for their turn
+        await this.waitForTurn(interaction.id);
+
+        // Tell the user we're doing their one now
+        reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
+
+        // Render image to user
+        const images = await this.renderImage(imageSettings, interaction);
+
+        // If we failed tell the user
+        if (!images || images.length === 0) {
+            this.logger.error('Failed to render image');
+            reply = reply ? await reply.edit('Failed rendering image, please try again.') : await interaction.reply('Failed rendering image, please try again.');
+            return;
+        }
+
+        // Create discord attachments
+        const files = images.map((image, index) => new AttachmentBuilder(Buffer.from(image, 'base64'), {
+            // Create file name based on seed + index + clean_prompt
+            name: `${settings.seed}_${index}.png`,
+            description: settings.prompt,
+        }));
+
+        // Create buttons
+        const buttons = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+            new ButtonBuilder()
+                .setLabel('New seed')
+                .setEmoji('🎲')
+                .setStyle(ButtonStyle.Primary)
+                .setCustomId('new-seed'),
+            new ButtonBuilder()
+                .setLabel('Delete')
+                .setEmoji('🚨')
+                .setStyle(ButtonStyle.Danger)
+                .setCustomId('delete-message'),
+        );
+
+        // Create the embed which will hold the settings
+        // this is used for the "new-seed" and other remix type buttons
+        const embed = new EmbedBuilder()
+            .setDescription(Buffer.from(JSON.stringify(settings, null, 0), 'utf-8').toString('base64'));
+
+        await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files, components: [buttons], embeds: [embed] });
+        this.logger.info('Image posted to discord');
+    }
+
     @Slash({
         name: 'dream',
         description: 'Create an image via AI',
@@ -64,15 +169,15 @@ export class Commands {
             description: 'The prompt to use',
             required: true,
             type: ApplicationCommandOptionType.String,
-        }) originalPrompt: string,
+        }) prompt: string,
         @SlashOption({
             name: 'count',
             description: 'How many images to generate at once (max 4)',
-            required: true,
+            required: false,
             type: ApplicationCommandOptionType.Number,
             minValue: 1,
             maxValue: 4,
-        }) originalCount: number,
+        }) count: number = 1,
         @SlashOption({
             name: 'ratio',
             description: 'Aspect ratio',
@@ -102,7 +207,15 @@ export class Commands {
                 })));
             },
         })
-        originalModel: Model = 'realisticVisionV13_v13',
+        model: Model = 'realisticVisionV13_v13',
+        @SlashOption({
+            name: 'seed',
+            description: 'Which seed to use? (default is random)',
+            required: false,
+            type: ApplicationCommandOptionType.Number,
+            minValue: 1,
+            maxValue: 9_999_999_999,
+        }) seed: number = parseInt(`${Math.random() * 1_000_000_000}`, 10),
         @SlashOption({
             name: 'steps',
             description: 'Steps',
@@ -111,7 +224,7 @@ export class Commands {
             minValue: 1,
             maxValue: 100,
         })
-        originalSteps: number = 25,
+        steps: number = 25,
         @SlashOption({
             name: 'control-net-url',
             description: 'Which image to use for canny control net',
@@ -119,98 +232,97 @@ export class Commands {
             type: ApplicationCommandOptionType.String,
         }) controlNetUrl: string | undefined,
         @SlashOption({
-            name: 'seed',
-            description: 'Which seed to use? (default is random)',
-            required: false,
-            type: ApplicationCommandOptionType.Number,
-            minValue: 1,
-            maxValue: 9_999_999_999,
-        }) originalSeed: number = parseInt(`${Math.random() * 1_000_000_000}`, 10),
-        @SlashOption({
-            name: 'guidance-scale',
+            name: 'scale',
             description: 'How closely do you want the prompt to be followed?',
             required: false,
             type: ApplicationCommandOptionType.Number,
             minValue: 1,
             maxValue: 15,
-        }) originalGuidanceScale: number = 7.5,
+        }) scale: number = 7.5,
         @SlashOption({
             name: 'face-fix',
             description: 'Should faces be fixed after the image is generated? (this takes another 10s)',
             required: false,
             type: ApplicationCommandOptionType.Boolean,
-        }) originalFaceFix = false,
+        }) faceFix = false,
         interaction: CommandInteraction,
     ) {
         // Only works in guilds
         if (!interaction.guild?.id) return;
 
-        try {
-            // Check if verified
-            if (!((interaction.member?.roles) as GuildMemberRoleManager).cache.has('1142229529805459566')) {
-                await interaction.reply('You need to be verified first!');
-                return;
-            }
-
-            // Check if ratio is valid
-            const ratio = ratios[originalRatio];
-            if (ratio.maxCount < originalCount) {
-                await interaction.reply(`This aspect ratio only allows a max of \`${ratio.maxCount}\` images at a time, you selected \`${originalCount}\`. Please retry with a lower count.`);
-                return;
-            }
-
-            // Create reply so we can reuse this while loading, etc.
-            let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
-
-            // Add user's prompt to queue
-            if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
-            queue.add(interaction.id);
-
-            // wait until we're at the top of the queue
-            while (true) {
-                const nextItem = [...queue.values()].filter(Boolean)[0];
-                if (nextItem === interaction.id) break;
-                await sleep(100);
-            }
-
-            // Tell the user we're doing their one now
-            reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
-
-            // Create easy diffusion image settings
-            const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
-                .setPrompt(originalPrompt)
-                .setNumOutputs(originalCount > ratio.maxCount ? 1 : originalCount)
-                .setHeight(ratio.height)
-                .setWidth(ratio.width)
-                .setUseStableDiffusionModel(originalModel)
-                .setNumInferenceSteps(originalSteps)
-                .setBlockNSFW(interaction.channelId !== '1142828930831757362')
-                .setGuidanceScale(originalGuidanceScale)
-                .setUseFaceCorrection(originalFaceFix ? 'GFPGANv1.4' : undefined)
-                .setControlNetUrl(controlNetUrl)
-                .setSeed(originalSeed);
-
-            const settings = imageSettings.build();
-            this.logger.info('Rendering image', settings);
-
-            // Render image
-            const images = await imageSettings.render();
-
-            // Create discord attachments
-            const files = images.map((image, index) => new AttachmentBuilder(Buffer.from(image, 'base64'), {
-                // Create file name based on seed + index + clean_prompt
-                name: `${settings.seed}_${index}.png`,
-                description: settings.prompt,
-            }));
-
-            this.logger.info('Image rendered, posting to discord');
-            await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files });
-            this.logger.info('Image posted to discord');
-        } catch (error) {
-            this.logger.error('Failed to render image', { error });
-            await interaction.reply('FAILED, TRY AGAIN!');
-        } finally {
-            queue.delete(interaction.id);
+        // Check if ratio is valid
+        const ratio = ratios[originalRatio];
+        if (ratio.maxCount < count) {
+            await interaction.reply(`This aspect ratio only allows a max of \`${ratio.maxCount}\` images at a time, you selected \`${count}\`. Please retry with a lower count.`);
+            return;
         }
+
+        // Create reply so we can reuse this while loading, etc.
+        let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
+
+        // Create easy diffusion image settings
+        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
+            .setPrompt(prompt)
+            .setNumOutputs(count > ratio.maxCount ? 1 : count)
+            .setHeight(ratio.height)
+            .setWidth(ratio.width)
+            .setUseStableDiffusionModel(model)
+            .setNumInferenceSteps(steps)
+            .setBlockNSFW(interaction.channelId !== '1142828930831757362')
+            .setGuidanceScale(scale)
+            .setUseFaceCorrection(faceFix ? 'GFPGANv1.4' : undefined)
+            .setControlNetUrl(controlNetUrl)
+            .setSeed(seed);
+
+        // Generate settings
+        const settings = imageSettings.build();
+
+        // Add user's prompt to queue
+        if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
+
+        // Wait for their turn
+        await this.waitForTurn(interaction.id);
+
+        // Tell the user we're doing their one now
+        reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
+
+        // Render image to user
+        const images = await this.renderImage(imageSettings, interaction);
+
+        // If we failed tell the user
+        if (!images || images.length === 0) {
+            this.logger.error('Failed to render image');
+            reply = reply ? await reply.edit('Failed rendering image, please try again.') : await interaction.reply('Failed rendering image, please try again.');
+            return;
+        }
+
+        // Create discord attachments
+        const files = images.map((image, index) => new AttachmentBuilder(Buffer.from(image, 'base64'), {
+            // Create file name based on seed + index + clean_prompt
+            name: `${settings.seed}_${index}.png`,
+            description: settings.prompt,
+        }));
+
+        // Create buttons
+        const buttons = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(
+            new ButtonBuilder()
+                .setLabel('New seed')
+                .setEmoji('🎲')
+                .setStyle(ButtonStyle.Primary)
+                .setCustomId('new-seed'),
+            new ButtonBuilder()
+                .setLabel('Delete')
+                .setEmoji('🚨')
+                .setStyle(ButtonStyle.Danger)
+                .setCustomId('delete-message'),
+        );
+
+        // Create the embed which will hold the settings
+        // this is used for the "new-seed" and other remix type buttons
+        const embed = new EmbedBuilder()
+            .setDescription(Buffer.from(JSON.stringify(settings, null, 0), 'utf-8').toString('base64'));
+
+        await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files, components: [buttons], embeds: [embed] });
+        this.logger.info('Image posted to discord');
     }
 }
