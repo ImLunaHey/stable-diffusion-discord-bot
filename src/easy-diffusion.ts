@@ -122,11 +122,36 @@ export class EasyDiffusion {
         return this;
     }
 
-    setNumOutputs(numOutputs: number): EasyDiffusion {
+    /**
+     * Sets the number of output images to be generated in a single operation.
+     * Generating multiple images at once can improve efficiency when producing batches.
+     *
+     * @param numOutputs - The desired number of output images to generate.
+     *
+     * @example
+     * // Generating 5 output images in a single operation
+     * const easyDiffusion = new EasyDiffusion();
+     * easyDiffusion.setNumOutputs(5);
+     * easyDiffusion.render();
+     */
+    setNumOutputs(numOutputs: number) {
         this.data.num_outputs = numOutputs;
         return this;
     }
 
+
+    /**
+     * Sets the number of iterative inference steps to refine the AI image generation process.
+     * Increasing the number of inference steps can lead to more detailed and intricate images.
+     *
+     * @param numInferenceSteps - The desired number of iterative inference steps.
+     * 
+     * @example
+     * // Generating an image with increased inference steps for more intricate details
+     * const easyDiffusion = new EasyDiffusion();
+     * easyDiffusion.setNumInferenceSteps(15);
+     * easyDiffusion.render();
+     */
     setNumInferenceSteps(numInferenceSteps: number): EasyDiffusion {
         this.data.num_inference_steps = numInferenceSteps;
         return this;
