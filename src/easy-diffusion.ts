@@ -55,7 +55,17 @@ export type Data = {
     original_prompt: string;
     active_tags: string[];
     inactive_tags: string[];
+    use_upscale: 'RealESRGAN_x4plus' | undefined;
+    upscale_amount: number | undefined;
+    use_controlnet_model: string | undefined;
     session_id: string;
+};
+
+const negativePrompts = {
+    age: ['teen', 'kid', 'child', 'underage', 'minor', 'children'],
+    badWords: ['rape'],
+    badQuality: ['cropped', 'worst quality', 'low quality', 'normal quality', 'jpeg artifacts', 'signature', '(((watermark)))', 'username', 'blurry', 'lowres', 'error'],
+    badQualityPeople: ['bad anatomy', 'bad hands', 'missing fingers', 'extra digit', 'fewer digits'],
 };
 
 export class EasyDiffusion {
@@ -70,16 +80,21 @@ export class EasyDiffusion {
             .padStart(2, '0')}-${new Date().getUTCDate()}`;
         this.data = {
             prompt: 'a photograph of an astronaut riding a horse',
+            original_prompt: 'a photograph of an astronaut riding a horse',
             seed: 1458359407,
             used_random_seed: true,
-            negative_prompt: 'teen, kid, child, underage, 15, 16, 17, minor, children, rape, lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, (((watermark))), username, blurry, face not visible, hat, tattoos',
+            negative_prompt: [
+                ...negativePrompts.age,
+                ...negativePrompts.badQuality,
+                ...negativePrompts.badWords,
+            ].join(', '),
             num_outputs: 1,
             num_inference_steps: 20,
             guidance_scale: 7.5,
             width: 512,
             height: 512,
             vram_usage_level: 'balanced',
-            sampler_name: 'dpmpp_sde',
+            sampler_name: 'euler_a',
             use_face_correction: undefined,
             use_stable_diffusion_model: 'realisticVisionV13_v13',
             clip_skip: false,
@@ -93,12 +108,20 @@ export class EasyDiffusion {
             output_quality: 75,
             output_lossless: false,
             metadata_output_format: 'none',
-            original_prompt: 'a photograph of an astronaut riding a horse',
             active_tags: [],
             inactive_tags: [],
+            use_upscale: undefined,
+            upscale_amount: undefined,
+            use_controlnet_model: undefined,
             session_id: sessionId,
             ...data,
         } satisfies Partial<Data>;
+    }
+
+    useRandomSeed(): EasyDiffusion {
+        this.data.seed = parseInt(`${Math.random() * 1_000_000_000}`, 10);
+        this.data.used_random_seed = true;
+        return this;
     }
 
     setPrompt(prompt: string): EasyDiffusion {
@@ -109,11 +132,6 @@ export class EasyDiffusion {
 
     setSeed(seed: number): EasyDiffusion {
         this.data.seed = seed;
-        return this;
-    }
-
-    setUsedRandomSeed(usedRandomSeed: boolean): EasyDiffusion {
-        this.data.used_random_seed = usedRandomSeed;
         return this;
     }
 
@@ -138,7 +156,6 @@ export class EasyDiffusion {
         this.data.num_outputs = numOutputs;
         return this;
     }
-
 
     /**
      * Sets the number of iterative inference steps to refine the AI image generation process.
@@ -177,13 +194,13 @@ export class EasyDiffusion {
         return this;
     }
 
-    setSamplerName(samplerName: string): EasyDiffusion {
-        this.data.sampler_name = samplerName;
+    setSampler(name: string): EasyDiffusion {
+        this.data.sampler_name = name;
         return this;
     }
 
-    setUseStableDiffusionModel(useStableDiffusionModel: string): EasyDiffusion {
-        this.data.use_stable_diffusion_model = useStableDiffusionModel;
+    setStableDiffusionModel(model: string): EasyDiffusion {
+        this.data.use_stable_diffusion_model = model;
         return this;
     }
 
@@ -197,8 +214,8 @@ export class EasyDiffusion {
         return this;
     }
 
-    setUseVAEModel(useVAEModel: string): EasyDiffusion {
-        this.data.use_vae_model = useVAEModel;
+    setVAEModel(model: string): EasyDiffusion {
+        this.data.use_vae_model = model;
         return this;
     }
 
@@ -222,7 +239,7 @@ export class EasyDiffusion {
         return this;
     }
 
-    setOutputFormat(outputFormat: string): EasyDiffusion {
+    setOutputFormat(outputFormat: 'png' | 'jpeg'): EasyDiffusion {
         this.data.output_format = outputFormat;
         return this;
     }
@@ -262,8 +279,15 @@ export class EasyDiffusion {
         return this;
     }
 
-    setControlNetUrl(url?: string | undefined): EasyDiffusion {
-        this.controlNetUrl = url;
+    setControlNet(controlNet: 'control_v11p_sd15_canny' | undefined, url: string | undefined): EasyDiffusion {
+        this.data.use_controlnet_model = (controlNet && url) ? controlNet : undefined;
+        this.controlNetUrl = (controlNet && url) ? url : undefined;
+        return this;
+    }
+
+    setUpscaleAmount(amount: number | undefined) {
+        this.data.upscale_amount = amount;
+        this.data.use_upscale = amount ? 'RealESRGAN_x4plus' : undefined;
         return this;
     }
 
@@ -277,10 +301,15 @@ export class EasyDiffusion {
         const body = JSON.stringify({
             ...settings,
             ...(controlImage ? {
-                use_controlnet_model: 'control_v11p_sd15_canny',
                 control_image: controlImage,
-            } : {})
-        });
+            } : {}),
+            ...(settings.prompt.includes('person') || settings.prompt.includes('people') ? {
+                negative_prompt: [
+                    ...settings.negative_prompt.split(','),
+                    negativePrompts.badQualityPeople,
+                ].join(','),
+            } : {}),
+        } satisfies Data);
 
         const response = await fetch(`${this.url}/render`, {
             headers: {
@@ -295,7 +324,7 @@ export class EasyDiffusion {
             await sleep(100);
 
             // Fetch the image itself
-            const response = await fetch(`http://192.168.1.101:9000${json.stream}`);
+            const response = await fetch(`http://finds-azerbaijan-optical-ma.trycloudflare.com${json.stream}`);
             const body = await response.json().catch(() => null) as ImageResponse;
 
             // Waiting for the image to start rendering

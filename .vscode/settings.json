@@ -2,7 +2,10 @@
     "autoHide.autoHidePanel": false,
     "autoHide.autoHideSideBar": false,
     "cSpell.words": [
+        "dpmpp",
+        "ESRGAN",
         "GFPGA",
-        "lazymix"
+        "lazymix",
+        "lowres"
     ]
 }

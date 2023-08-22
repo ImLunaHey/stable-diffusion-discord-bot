@@ -1,6 +1,6 @@
 import '@total-typescript/ts-reset';
-import { ActionRowBuilder, ApplicationCommandOptionType, AttachmentBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, Collection, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, MessageActionRowComponentBuilder, Role } from 'discord.js';
-import { type ArgsOf, Discord, On, Slash, SlashOption, SlashChoice, ButtonComponent } from 'discordx';
+import { ActionRowBuilder, ApplicationCommandOptionType, AttachmentBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, MessageActionRowComponentBuilder } from 'discord.js';
+import { Discord, Slash, SlashOption, ButtonComponent, SlashChoice } from 'discordx';
 import { Data, EasyDiffusion } from './easy-diffusion';
 import { Logger } from './logger';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -88,24 +88,18 @@ export class Commands {
         }
     }
 
-    @ButtonComponent({ id: 'delete-message' })
-    async deleteMessage(interaction: ButtonInteraction): Promise<void> {
-        try {
-            await interaction.message.delete();
-        } catch { }
-    }
-
-    @ButtonComponent({ id: 'new-seed' })
-    async newSeed(interaction: ButtonInteraction): Promise<void> {
+    async generateFollowupImage(interaction: ButtonInteraction, newData: Data, followupMessage: string) {
         // Create reply so we can reuse this while loading, etc.
         let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
 
         // Create easy diffusion image settings
         const dataEmbed = interaction.message.embeds[0];
         if (!dataEmbed.description) return;
-        const data = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data;
-        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000', data)
-            .setSeed(parseInt(`${Math.random() * 1_000_000_000}`, 10));
+        const oldData = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data;
+        const imageSettings = new EasyDiffusion('http://finds-azerbaijan-optical-ma.trycloudflare.com', {
+            ...oldData,
+            ...newData,
+        });
 
         // Generate settings
         const settings = imageSettings.build();
@@ -144,6 +138,21 @@ export class Commands {
                 .setStyle(ButtonStyle.Primary)
                 .setCustomId('new-seed'),
             new ButtonBuilder()
+                .setLabel('Fix faces')
+                .setEmoji('💄')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId(settings.use_face_correction ? 'fix-faces-off' : 'fix-faces-on'),
+            new ButtonBuilder()
+                .setLabel('Upscale x2')
+                .setEmoji('🔎')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId('upscale-x2'),
+            new ButtonBuilder()
+                .setLabel('Upscale x4')
+                .setEmoji('🔎')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId('upscale-x4'),
+            new ButtonBuilder()
                 .setLabel('Delete')
                 .setEmoji('🚨')
                 .setStyle(ButtonStyle.Danger)
@@ -155,8 +164,42 @@ export class Commands {
         const embed = new EmbedBuilder()
             .setDescription(Buffer.from(JSON.stringify(settings, null, 0), 'utf-8').toString('base64'));
 
-        await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files, components: [buttons], embeds: [embed] });
+        await reply.edit({ content: followupMessage, files, components: [buttons], embeds: [embed] });
         this.logger.info('Image posted to discord');
+    }
+
+    @ButtonComponent({ id: 'delete-message' })
+    async deleteMessage(interaction: ButtonInteraction): Promise<void> {
+        try {
+            await interaction.message.delete();
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'upscale-x2' })
+    async upscaleX2(interaction: ButtonInteraction): Promise<void> {
+        try {
+            this.generateFollowupImage(interaction, {
+                upscale_amount: 2,
+            } as Data, `<@${interaction.user.id}> your image has been upscaled \`x2\`!`);
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'upscale-x4' })
+    async upscaleX4(interaction: ButtonInteraction): Promise<void> {
+        try {
+            this.generateFollowupImage(interaction, {
+                upscale_amount: 2,
+            } as Data, `<@${interaction.user.id}> your image has been upscaled \`x4\`!`);
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'new-seed' })
+    async newSeed(interaction: ButtonInteraction): Promise<void> {
+        try {
+            this.generateFollowupImage(interaction, {
+                seed: new EasyDiffusion().useRandomSeed().build().seed,
+            } as Data, `<@${interaction.user.id}> your image is ready!`);
+        } catch { }
     }
 
     @Slash({
@@ -225,20 +268,44 @@ export class Commands {
             maxValue: 100,
         })
         steps: number = 25,
+        @SlashChoice({ name: 'Canny', value: 'control_v11p_sd15_canny' })
+        @SlashOption({
+            name: 'control-net',
+            description: 'Which control net to use',
+            required: false,
+            type: ApplicationCommandOptionType.String,
+        }) controlNet: 'control_v11p_sd15_canny' | undefined,
         @SlashOption({
             name: 'control-net-url',
-            description: 'Which image to use for canny control net',
+            description: 'Which image to use for control net',
             required: false,
             type: ApplicationCommandOptionType.String,
         }) controlNetUrl: string | undefined,
         @SlashOption({
-            name: 'scale',
+            name: 'guidance-scale',
             description: 'How closely do you want the prompt to be followed?',
             required: false,
             type: ApplicationCommandOptionType.Number,
             minValue: 1,
             maxValue: 15,
-        }) scale: number = 7.5,
+        }) guidanceScale: number = 7.5,
+        @SlashChoice({ name: 'Euler', value: 'euler' })
+        @SlashChoice({ name: 'Euler Ancestral', value: 'euler_a' })
+        @SlashChoice({ name: 'DPM++ SDE (Karras) (default)', value: 'dpmpp_sde' })
+        @SlashOption({
+            name: 'sampler',
+            description: 'Which sampler to use',
+            required: false,
+            type: ApplicationCommandOptionType.String,
+        }) sampler: string = 'dpmpp_sde',
+        @SlashOption({
+            name: 'upscale',
+            description: 'How many times to upscale the image',
+            required: false,
+            type: ApplicationCommandOptionType.Number,
+            minValue: 2,
+            maxValue: 10,
+        }) upscale: number | undefined = undefined,
         @SlashOption({
             name: 'face-fix',
             description: 'Should faces be fixed after the image is generated? (this takes another 10s)',
@@ -261,17 +328,19 @@ export class Commands {
         let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
 
         // Create easy diffusion image settings
-        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
+        const imageSettings = new EasyDiffusion('http://finds-azerbaijan-optical-ma.trycloudflare.com')
             .setPrompt(prompt)
             .setNumOutputs(count > ratio.maxCount ? 1 : count)
             .setHeight(ratio.height)
             .setWidth(ratio.width)
-            .setUseStableDiffusionModel(model)
+            .setSampler(sampler)
+            .setStableDiffusionModel(model)
             .setNumInferenceSteps(steps)
             .setBlockNSFW(interaction.channelId !== '1142828930831757362')
-            .setGuidanceScale(scale)
+            .setGuidanceScale(guidanceScale)
             .setUseFaceCorrection(faceFix ? 'GFPGANv1.4' : undefined)
-            .setControlNetUrl(controlNetUrl)
+            .setControlNet(controlNet, controlNetUrl)
+            .setUpscaleAmount(upscale)
             .setSeed(seed);
 
         // Generate settings
@@ -310,6 +379,21 @@ export class Commands {
                 .setEmoji('🎲')
                 .setStyle(ButtonStyle.Primary)
                 .setCustomId('new-seed'),
+            new ButtonBuilder()
+                .setLabel('Fix faces')
+                .setEmoji('💄')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId(settings.use_face_correction ? 'fix-faces-off' : 'fix-faces-on'),
+            new ButtonBuilder()
+                .setLabel('Upscale x2')
+                .setEmoji('🔎')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId('upscale-x2'),
+            new ButtonBuilder()
+                .setLabel('Upscale x4')
+                .setEmoji('🔎')
+                .setStyle(ButtonStyle.Secondary)
+                .setCustomId('upscale-x4'),
             new ButtonBuilder()
                 .setLabel('Delete')
                 .setEmoji('🚨')
