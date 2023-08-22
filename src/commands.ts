@@ -95,11 +95,11 @@ export class Commands {
         // Create easy diffusion image settings
         const dataEmbed = interaction.message.embeds[0];
         if (!dataEmbed.description) return;
-        const oldData = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data;
+        const { controlNetUrl, ...oldData } = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data & { controlNetUrl: string | undefined; };
         const imageSettings = new EasyDiffusion('http://finds-azerbaijan-optical-ma.trycloudflare.com', {
             ...oldData,
             ...newData,
-        });
+        }).setControlNet(oldData.use_controlnet_model, controlNetUrl);
 
         // Generate settings
         const settings = imageSettings.build();
@@ -138,9 +138,9 @@ export class Commands {
                 .setStyle(ButtonStyle.Primary)
                 .setCustomId('new-seed'),
             new ButtonBuilder()
-                .setLabel('Fix faces')
+                .setLabel(settings.use_face_correction ? 'Disable face fix' : 'Enable face fix')
                 .setEmoji('💄')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(settings.use_face_correction ? ButtonStyle.Danger : ButtonStyle.Success)
                 .setCustomId(settings.use_face_correction ? 'fix-faces-off' : 'fix-faces-on'),
             new ButtonBuilder()
                 .setLabel('Upscale x2')
@@ -162,7 +162,10 @@ export class Commands {
         // Create the embed which will hold the settings
         // this is used for the "new-seed" and other remix type buttons
         const embed = new EmbedBuilder()
-            .setDescription(Buffer.from(JSON.stringify(settings, null, 0), 'utf-8').toString('base64'));
+            .setDescription(Buffer.from(JSON.stringify({
+                ...settings,
+                controlNetUrl,
+            }, null, 0), 'utf-8').toString('base64'));
 
         await reply.edit({ content: followupMessage, files, components: [buttons], embeds: [embed] });
         this.logger.info('Image posted to discord');
@@ -198,6 +201,24 @@ export class Commands {
         try {
             this.generateFollowupImage(interaction, {
                 seed: new EasyDiffusion().useRandomSeed().build().seed,
+            } as Data, `<@${interaction.user.id}> your image is ready!`);
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'fix-faces-on' })
+    async fixFacesOn(interaction: ButtonInteraction): Promise<void> {
+        try {
+            this.generateFollowupImage(interaction, {
+                use_face_correction: 'GFPGANv1.4',
+            } as Data, `<@${interaction.user.id}> finished running face fix on your image!`);
+        } catch { }
+    }
+
+    @ButtonComponent({ id: 'fix-faces-off' })
+    async fixFacesOff(interaction: ButtonInteraction): Promise<void> {
+        try {
+            this.generateFollowupImage(interaction, {
+                use_face_correction: undefined,
             } as Data, `<@${interaction.user.id}> your image is ready!`);
         } catch { }
     }
@@ -324,6 +345,18 @@ export class Commands {
             return;
         }
 
+        // Check if the user forgot to provide a control net URL
+        if (controlNet && !controlNetUrl) {
+            await interaction.reply('You forgot to provide a control net URL');
+            return;
+        }
+
+        // Check if the user forgot to select a control net
+        if (!controlNet && controlNetUrl) {
+            await interaction.reply('You forgot to select a control net');
+            return;
+        }
+
         // Create reply so we can reuse this while loading, etc.
         let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
 
@@ -380,9 +413,9 @@ export class Commands {
                 .setStyle(ButtonStyle.Primary)
                 .setCustomId('new-seed'),
             new ButtonBuilder()
-                .setLabel('Fix faces')
+                .setLabel(settings.use_face_correction ? 'Disable face fix' : 'Enable face fix')
                 .setEmoji('💄')
-                .setStyle(ButtonStyle.Secondary)
+                .setStyle(settings.use_face_correction ? ButtonStyle.Danger : ButtonStyle.Success)
                 .setCustomId(settings.use_face_correction ? 'fix-faces-off' : 'fix-faces-on'),
             new ButtonBuilder()
                 .setLabel('Upscale x2')
@@ -404,7 +437,10 @@ export class Commands {
         // Create the embed which will hold the settings
         // this is used for the "new-seed" and other remix type buttons
         const embed = new EmbedBuilder()
-            .setDescription(Buffer.from(JSON.stringify(settings, null, 0), 'utf-8').toString('base64'));
+            .setDescription(Buffer.from(JSON.stringify({
+                ...settings,
+                controlNetUrl,
+            }, null, 0), 'utf-8').toString('base64'));
 
         await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files, components: [buttons], embeds: [embed] });
         this.logger.info('Image posted to discord');

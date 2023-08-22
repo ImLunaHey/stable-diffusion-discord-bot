@@ -57,7 +57,7 @@ export type Data = {
     inactive_tags: string[];
     use_upscale: 'RealESRGAN_x4plus' | undefined;
     upscale_amount: number | undefined;
-    use_controlnet_model: string | undefined;
+    use_controlnet_model: 'control_v11p_sd15_canny' | undefined;
     session_id: string;
 };
 
