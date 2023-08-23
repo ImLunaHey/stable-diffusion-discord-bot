@@ -2,10 +2,15 @@
     "autoHide.autoHidePanel": false,
     "autoHide.autoHideSideBar": false,
     "cSpell.words": [
+        "ddim",
+        "ddpm",
+        "deis",
         "dpmpp",
         "ESRGAN",
         "GFPGA",
+        "heun",
         "lazymix",
-        "lowres"
+        "lowres",
+        "plms"
     ]
 }

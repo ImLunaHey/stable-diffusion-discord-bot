@@ -372,9 +372,21 @@ export class Commands {
             minValue: 1,
             maxValue: 15,
         }) guidanceScale: number = 7.5,
+        @SlashChoice({ name: 'PLMS', value: 'plms' })
+        @SlashChoice({ name: 'DDIM', value: 'ddim' })
+        @SlashChoice({ name: 'Heun', value: 'heun' })
         @SlashChoice({ name: 'Euler', value: 'euler' })
         @SlashChoice({ name: 'Euler Ancestral', value: 'euler_a' })
-        @SlashChoice({ name: 'DPM++ SDE (Karras) (default)', value: 'dpmpp_sde' })
+        @SlashChoice({ name: 'DPM2', value: 'dpm2' })
+        @SlashChoice({ name: 'DPM2 Ancestral', value: 'dpm2_a' })
+        @SlashChoice({ name: 'LMS', value: 'lms' })
+        @SlashChoice({ name: 'DPM Solver (Stability AI)', value: 'dpm_solver_stability' })
+        @SlashChoice({ name: 'DPM++ 2s Ancestral (Karras)', value: 'dpmpp_2s_a' })
+        @SlashChoice({ name: 'DPM++ 2m (Karras)', value: 'dpmpp_2m' })
+        @SlashChoice({ name: 'DPM++ 2m SDE (Karras)', value: 'dpmpp_2m_sde' })
+        @SlashChoice({ name: 'DPM++ SDE (Karras) [default]', value: 'dpmpp_sde' })
+        @SlashChoice({ name: 'DDPM', value: 'ddpm' })
+        @SlashChoice({ name: 'DEIS', value: 'deis' })
         @SlashOption({
             name: 'sampler',
             description: 'Which sampler to use',
