@@ -1,14 +1,25 @@
 import '@total-typescript/ts-reset';
-import { ActionRowBuilder, ApplicationCommandOptionType, AttachmentBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, MessageActionRowComponentBuilder } from 'discord.js';
+import { ActionRowBuilder, ApplicationCommandOptionType, AttachmentBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, Channel, ChannelType, CommandInteraction, GuildMemberRoleManager, InteractionResponse, Message, MessageActionRowComponentBuilder, TextBasedChannel, TextChannel } from 'discord.js';
 import { Discord, Slash, SlashOption, ButtonComponent, SlashChoice } from 'discordx';
 import { Data, EasyDiffusion } from './easy-diffusion';
 import { Logger } from './logger';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { EmbedBuilder } from '@discordjs/builders';
+import { Axiom } from '@axiomhq/js';
+
+const axiom = new Axiom({
+    token: process.env.AXIOM_TOKEN,
+    orgId: process.env.AXIOM_ORG_ID,
+});
 
 const queue = new Set();
 
 const isBetaTester = (id: string) => ['784365843810222080', '120010437294161920'].includes(id);
+
+const isTextChannelOrThread = (channel: TextBasedChannel | null): channel is TextChannel => {
+    if (channel?.isThread()) return true;
+    return channel?.type === ChannelType.GuildText;
+}
 
 type Ratio = '1:1' | '2:3' | '3:2' | '9:16' | '16:9';
 const ratios = {
@@ -81,45 +92,78 @@ export class Commands {
 
             const images = await imageSettings.render();
             this.logger.info('Image rendered');
-
             return images;
+        } catch (error) {
+            this.logger.error('Failed to render image', { error });
+            return null;
         } finally {
             queue.delete(interaction.id);
         }
     }
 
     async generateFollowupImage(interaction: ButtonInteraction, newData: Data, followupMessage: string) {
+        // Check if this is a thread channel
+        const isThread = interaction.channel?.isThread();
+
         // Create reply so we can reuse this while loading, etc.
         let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
 
+        // Only works in guilds
+        if (!interaction.guild?.id) return;
+
+        // Only allow this in text channels
+        if (!isTextChannelOrThread(interaction.channel)) {
+            await interaction.reply('This command only works in text channels.');
+            return;
+        }
+
+        // If this isn't a thread create one
+        const threadName = interaction.user.username;
+        const thread = isThread ? interaction.channel : (interaction.channel.threads.cache.find(channel => channel.name === threadName) ?? await interaction.channel.threads.create({
+            name: threadName,
+            type: ChannelType.PrivateThread,
+            autoArchiveDuration: 60,
+        }));
+
+        // If we had to create the thread join it and add the user who requested it
+        if (!isThread) await thread.join();
+        if (!isThread) await thread.members.add(interaction.user);
+
         // Create easy diffusion image settings
         const dataEmbed = interaction.message.embeds[0];
-        if (!dataEmbed.description) return;
-        const { controlNetUrl, ...oldData } = JSON.parse(Buffer.from(dataEmbed.description, 'base64').toString('utf-8')) as Data & { controlNetUrl: string | undefined; };
-        const imageSettings = new EasyDiffusion('http://finds-azerbaijan-optical-ma.trycloudflare.com', {
+        const id = dataEmbed.footer?.text.substring(4);
+        const query = await axiom.query(`
+            ['sd-bot']
+            | where id == "${id}"
+        `);
+        const { controlNetUrl, ...oldData } = query.matches?.[0].data.data as Data & { controlNetUrl: string | undefined; } ?? {};
+        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000', {
             ...oldData,
             ...newData,
-        }).setControlNet(oldData.use_controlnet_model, controlNetUrl);
+        }).setControlNet(oldData.use_controlnet_model, controlNetUrl).setBlockNSFW(false);
 
         // Generate settings
         const settings = imageSettings.build();
 
         // Add user's prompt to queue
-        if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
+        if (queue.size >= 1) reply = isThread ? await interaction.reply('Queued, please wait...') : await thread.send('Queued, please wait...');
 
         // Wait for their turn
         await this.waitForTurn(interaction.id);
 
         // Tell the user we're doing their one now
-        reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
+        reply = reply ? await reply.edit('Rendering image...') : (isThread ? await interaction.reply('Rendering image...') : await thread.send('Rendering image...'));
 
         // Render image to user
         const images = await this.renderImage(imageSettings, interaction);
 
         // If we failed tell the user
         if (!images || images.length === 0) {
-            this.logger.error('Failed to render image');
-            reply = reply ? await reply.edit('Failed rendering image, please try again.') : await interaction.reply('Failed rendering image, please try again.');
+            const embed = new EmbedBuilder()
+                .setTitle('🚨 Error 🚨')
+                .setDescription('Failed rendering image, please try again.');
+            if (reply) await reply.edit({ embeds: [embed] });
+            else await thread.send({ embeds: [embed] });
             return;
         }
 
@@ -159,13 +203,21 @@ export class Commands {
                 .setCustomId('delete-message'),
         );
 
-        // Create the embed which will hold the settings
-        // this is used for the "new-seed" and other remix type buttons
-        const embed = new EmbedBuilder()
-            .setDescription(Buffer.from(JSON.stringify({
+        // Save all the data needed to reconstruct this session
+        axiom.ingest('sd-bot', [{
+            id: interaction.id,
+            data: {
                 ...settings,
                 controlNetUrl,
-            }, null, 0), 'utf-8').toString('base64'));
+            },
+        }]);
+        await axiom.flush();
+
+        // Save the prompt + ID in the embed
+        const embed = new EmbedBuilder()
+            .setFooter({
+                text: `ID: ${interaction.id}`,
+            });
 
         await reply.edit({ content: followupMessage, files, components: [buttons], embeds: [embed] });
         this.logger.info('Image posted to discord');
@@ -181,46 +233,56 @@ export class Commands {
     @ButtonComponent({ id: 'upscale-x2' })
     async upscaleX2(interaction: ButtonInteraction): Promise<void> {
         try {
-            this.generateFollowupImage(interaction, {
+            await this.generateFollowupImage(interaction, {
                 upscale_amount: 2,
             } as Data, `<@${interaction.user.id}> your image has been upscaled \`x2\`!`);
-        } catch { }
+        } catch (error) {
+            this.logger.error('Failed upscaling x2', { error });
+        }
     }
 
     @ButtonComponent({ id: 'upscale-x4' })
     async upscaleX4(interaction: ButtonInteraction): Promise<void> {
         try {
-            this.generateFollowupImage(interaction, {
+            await this.generateFollowupImage(interaction, {
                 upscale_amount: 2,
             } as Data, `<@${interaction.user.id}> your image has been upscaled \`x4\`!`);
-        } catch { }
+        } catch (error) {
+            this.logger.error('Failed upscaling x4', { error });
+        }
     }
 
     @ButtonComponent({ id: 'new-seed' })
     async newSeed(interaction: ButtonInteraction): Promise<void> {
         try {
-            this.generateFollowupImage(interaction, {
+            await this.generateFollowupImage(interaction, {
                 seed: new EasyDiffusion().useRandomSeed().build().seed,
             } as Data, `<@${interaction.user.id}> your image is ready!`);
-        } catch { }
+        } catch (error) {
+            this.logger.error('Failed new seed', { error });
+        }
     }
 
     @ButtonComponent({ id: 'fix-faces-on' })
     async fixFacesOn(interaction: ButtonInteraction): Promise<void> {
         try {
-            this.generateFollowupImage(interaction, {
+            await this.generateFollowupImage(interaction, {
                 use_face_correction: 'GFPGANv1.4',
             } as Data, `<@${interaction.user.id}> finished running face fix on your image!`);
-        } catch { }
+        } catch (error) {
+            this.logger.error('Failed fixing faces', { error });
+        }
     }
 
     @ButtonComponent({ id: 'fix-faces-off' })
     async fixFacesOff(interaction: ButtonInteraction): Promise<void> {
         try {
-            this.generateFollowupImage(interaction, {
+            await this.generateFollowupImage(interaction, {
                 use_face_correction: undefined,
             } as Data, `<@${interaction.user.id}> your image is ready!`);
-        } catch { }
+        } catch (error) {
+            this.logger.error('Failed rendering image', { error });
+        }
     }
 
     @Slash({
@@ -335,41 +397,68 @@ export class Commands {
         }) faceFix = false,
         interaction: CommandInteraction,
     ) {
+        // Create reply so we can reuse this while loading, etc.
+        let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
+
         // Only works in guilds
         if (!interaction.guild?.id) return;
+
+        // Only allow this in text channels
+        if (!isTextChannelOrThread(interaction.channel)) {
+            await interaction.reply('This command only works in text channels.');
+            return;
+        }
+
+        // If this isn't a thread create one
+        const isThread = interaction.channel?.isThread();
+        const threadName = interaction.user.username;
+        const foundThread = interaction.channel.isThread() ? undefined : interaction.channel.threads.cache.find(channel => channel.name === threadName);
+        const thread = isThread ? interaction.channel : (foundThread ?? await interaction.channel.threads.create({
+            name: threadName,
+            type: ChannelType.PrivateThread,
+            autoArchiveDuration: 60,
+        }));
+
+        // Join the new thread
+        if (!isThread) await thread.join();
+        if (!isThread) await thread.members.add(interaction.user);
+
+        // Tell the user we made a thread
+        if (!isThread) {
+            if (foundThread) await interaction.reply(`Your image will be posted in your thread <#${thread.id}>`);
+            else await interaction.reply(`A new thread has been made for you <#${thread.id}> your image will be posted in the thread.`);
+        }
 
         // Check if ratio is valid
         const ratio = ratios[originalRatio];
         if (ratio.maxCount < count) {
-            await interaction.reply(`This aspect ratio only allows a max of \`${ratio.maxCount}\` images at a time, you selected \`${count}\`. Please retry with a lower count.`);
+            await thread.send(`This aspect ratio only allows a max of \`${ratio.maxCount}\` images at a time, you selected \`${count}\`. Please retry with a lower count.`);
             return;
         }
 
         // Check if the user forgot to provide a control net URL
         if (controlNet && !controlNetUrl) {
-            await interaction.reply('You forgot to provide a control net URL');
+            await thread.send('You forgot to provide a control net URL');
             return;
         }
 
         // Check if the user forgot to select a control net
         if (!controlNet && controlNetUrl) {
-            await interaction.reply('You forgot to select a control net');
+            await thread.send('You forgot to select a control net');
             return;
         }
 
-        // Create reply so we can reuse this while loading, etc.
-        let reply: InteractionResponse<boolean> | Message<boolean> | null = null;
-
         // Create easy diffusion image settings
-        const imageSettings = new EasyDiffusion('http://finds-azerbaijan-optical-ma.trycloudflare.com')
+        const imageSettings = new EasyDiffusion('http://192.168.1.101:9000')
             .setPrompt(prompt)
             .setNumOutputs(count > ratio.maxCount ? 1 : count)
             .setHeight(ratio.height)
             .setWidth(ratio.width)
+            .setVRAMUsageLevel('balanced')
             .setSampler(sampler)
             .setStableDiffusionModel(model)
             .setNumInferenceSteps(steps)
-            .setBlockNSFW(interaction.channelId !== '1142828930831757362')
+            .setBlockNSFW(false)
             .setGuidanceScale(guidanceScale)
             .setUseFaceCorrection(faceFix ? 'GFPGANv1.4' : undefined)
             .setControlNet(controlNet, controlNetUrl)
@@ -380,13 +469,13 @@ export class Commands {
         const settings = imageSettings.build();
 
         // Add user's prompt to queue
-        if (queue.size >= 1) reply = await interaction.reply('Queued, please wait...');
+        if (queue.size >= 1) reply = isThread ? await interaction.reply('Queued, please wait...') : await thread.send('Queued, please wait...');
 
         // Wait for their turn
         await this.waitForTurn(interaction.id);
 
         // Tell the user we're doing their one now
-        reply = reply ? await reply.edit('Rendering image...') : await interaction.reply('Rendering image...');
+        reply = reply ? await reply.edit('Rendering image...') : (isThread ? await interaction.reply('Rendering image...') : await thread.send('Rendering image...'));
 
         // Render image to user
         const images = await this.renderImage(imageSettings, interaction);
@@ -394,7 +483,11 @@ export class Commands {
         // If we failed tell the user
         if (!images || images.length === 0) {
             this.logger.error('Failed to render image');
-            reply = reply ? await reply.edit('Failed rendering image, please try again.') : await interaction.reply('Failed rendering image, please try again.');
+            const embed = new EmbedBuilder()
+                .setTitle('🚨 Error 🚨')
+                .setDescription('Failed rendering image, please try again.');
+            if (reply) await reply.edit({ embeds: [embed] });
+            else await thread.send({ embeds: [embed] });
             return;
         }
 
@@ -434,13 +527,21 @@ export class Commands {
                 .setCustomId('delete-message'),
         );
 
-        // Create the embed which will hold the settings
-        // this is used for the "new-seed" and other remix type buttons
-        const embed = new EmbedBuilder()
-            .setDescription(Buffer.from(JSON.stringify({
+        // Save all the data needed to reconstruct this session
+        axiom.ingest('sd-bot', [{
+            id: interaction.id,
+            data: {
                 ...settings,
                 controlNetUrl,
-            }, null, 0), 'utf-8').toString('base64'));
+            },
+        }]);
+        await axiom.flush();
+
+        // Save the prompt + ID in the embed
+        const embed = new EmbedBuilder()
+            .setFooter({
+                text: `ID: ${interaction.id}`,
+            });
 
         await reply.edit({ content: `<@${interaction.user.id}> your image is ready!`, files, components: [buttons], embeds: [embed] });
         this.logger.info('Image posted to discord');

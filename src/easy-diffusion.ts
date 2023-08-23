@@ -1,6 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Logger } from './logger';
 
+type PythonError = { detail: string; };
 type Online = { status: 'Online' | 'LoadingModel', queue: number, stream: string, task: number };
 type Step = { step: number, step_time: number, total_steps: number };
 type Output = {
@@ -9,9 +10,11 @@ type Output = {
     path_abs: null
 };
 type Success = { status: 'succeeded', output: Output[] };
+type Failure = { status: 'failed' };
+type Finished = Success | Failure;
 type ImageResponse = Success | Step | null;
 
-const isFinished = (body: Step | Success | null): body is Success => {
+const isFinished = (body: Step | Finished | null): body is Finished => {
     if (!body) return false;
     if ('status' in body) return body.status === 'succeeded';
     return false;
@@ -79,27 +82,27 @@ export class EasyDiffusion {
             .toString()
             .padStart(2, '0')}-${new Date().getUTCDate()}`;
         this.data = {
-            prompt: 'a photograph of an astronaut riding a horse',
-            original_prompt: 'a photograph of an astronaut riding a horse',
-            seed: 1458359407,
+            prompt: data.prompt ?? 'a photograph of an astronaut riding a horse',
+            original_prompt: data.original_prompt ?? data.prompt ?? 'a photograph of an astronaut riding a horse',
+            seed: data.seed ?? 1458359407,
             used_random_seed: true,
             negative_prompt: [
                 ...negativePrompts.age,
                 ...negativePrompts.badQuality,
                 ...negativePrompts.badWords,
             ].join(', '),
-            num_outputs: 1,
-            num_inference_steps: 20,
-            guidance_scale: 7.5,
-            width: 512,
-            height: 512,
-            vram_usage_level: 'balanced',
-            sampler_name: 'euler_a',
-            use_face_correction: undefined,
-            use_stable_diffusion_model: 'realisticVisionV13_v13',
-            clip_skip: false,
-            tiling: 'none',
-            use_vae_model: 'vae-ft-mse-840000-ema-pruned',
+            num_outputs: data.num_outputs ?? 1,
+            num_inference_steps: data.num_inference_steps ?? 20,
+            guidance_scale: data.guidance_scale ?? 7.5,
+            width: data.width ?? 512,
+            height: data.height ?? 512,
+            vram_usage_level: data.vram_usage_level ?? 'balanced',
+            sampler_name: data.sampler_name ?? 'euler_a',
+            use_face_correction: data.use_face_correction ?? undefined,
+            use_stable_diffusion_model: data.use_stable_diffusion_model ?? 'realisticVisionV13_v13',
+            clip_skip: data.clip_skip ?? false,
+            tiling: data.tiling ?? 'none',
+            use_vae_model: data.use_vae_model ?? 'vae-ft-mse-840000-ema-pruned',
             stream_progress_updates: true,
             stream_image_progress: true,
             show_only_filtered_image: true,
@@ -110,11 +113,10 @@ export class EasyDiffusion {
             metadata_output_format: 'none',
             active_tags: [],
             inactive_tags: [],
-            use_upscale: undefined,
-            upscale_amount: undefined,
-            use_controlnet_model: undefined,
+            use_upscale: data.use_upscale ?? undefined,
+            upscale_amount: data.upscale_amount ?? undefined,
+            use_controlnet_model: data.use_controlnet_model ?? undefined,
             session_id: sessionId,
-            ...data,
         } satisfies Partial<Data>;
     }
 
@@ -189,8 +191,8 @@ export class EasyDiffusion {
         return this;
     }
 
-    setVRAMUsageLevel(vramUsageLevel: string): EasyDiffusion {
-        this.data.vram_usage_level = vramUsageLevel;
+    setVRAMUsageLevel(vramUsageLevel: 'high' | 'balanced' | 'low' | undefined): EasyDiffusion {
+        this.data.vram_usage_level = vramUsageLevel ?? 'balanced';
         return this;
     }
 
@@ -275,7 +277,7 @@ export class EasyDiffusion {
     }
 
     setUseFaceCorrection(faceCorrection: 'GFPGANv1.4' | 'GFPGANv1.3' | undefined): EasyDiffusion {
-        this.data.use_face_correction = faceCorrection;
+        this.data.use_face_correction = faceCorrection ?? undefined;
         return this;
     }
 
@@ -286,7 +288,7 @@ export class EasyDiffusion {
     }
 
     setUpscaleAmount(amount: number | undefined) {
-        this.data.upscale_amount = amount;
+        this.data.upscale_amount = amount ?? undefined;
         this.data.use_upscale = amount ? 'RealESRGAN_x4plus' : undefined;
         return this;
     }
@@ -319,12 +321,17 @@ export class EasyDiffusion {
             body,
         });
 
-        const json = await response.json() as Online;
+        const json = await response.json() as Online | PythonError;
+
+        // Image failed to render before even starting
+        if ('detail' in json) throw new Error('Failed to start render', { cause: new Error(json.detail) });
+
+        // Wait until render is done
         while (true) {
             await sleep(100);
 
             // Fetch the image itself
-            const response = await fetch(`http://finds-azerbaijan-optical-ma.trycloudflare.com${json.stream}`);
+            const response = await fetch(`${this.url}${(json as Online).stream}`);
             const body = await response.json().catch(() => null) as ImageResponse;
 
             // Waiting for the image to start rendering
@@ -336,6 +343,9 @@ export class EasyDiffusion {
                 this.logger.debug(`Step ${body.step + 1}/${body.total_steps}`);
                 continue;
             }
+
+            // If the render failed log that
+            if (body.status !== 'succeeded') console.log(body);
 
             // Image is done
             return body.output.map(output => output.data.split(',')[1]);
